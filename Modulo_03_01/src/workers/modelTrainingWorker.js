@@ -1,8 +1,14 @@
 import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
 import { workerEvents } from '../events/constants.js';
-
-console.log('Model training worker initialized');
+import { create } from 'browser-sync';
 let _globalCtx = {};
+//Ordem de peso para cada dimensão do vetor de produto (categoria, cor, preço, idade média dos compradores)
+const WEIGHTS = {
+    category: 0.4,
+    color: 0.3,
+    price: 0.2,
+    age: 0.1
+};
 
 //Normaliza os valores de idade e preço para o intervalo [0, 1] para facilitar o treinamento do modelo.
 //Formula para nomalização: (value - min) / (max - min)
@@ -23,12 +29,12 @@ function makeContext(catalog, users) {
     const colors = [...new Set(catalog.map(p => p.color))]
     const categories = [...new Set(catalog.map(p => p.category))]
     
-    const colorIndex = Object.entries(
+    const colorIndex = Object.fromEntries(
         colors.map((color,index) => {
             return [color, index]
         }))
     
-    const categoriesIndex = Object.entries(
+    const categoriesIndex = Object.fromEntries(
         categories.map((category,index)=> {
             return [category, index]
         }))
@@ -66,11 +72,79 @@ function makeContext(catalog, users) {
         maxAge,
         minPrice,
         maxPrice,
+        productAvgAgeNorm,
         numCatagories: categories.length,
         numColors: colors.length,
         dimensions: 2 + categories.length + colors.length, // idade, preço + one-hot para categorias e cores
     }
     
+}
+
+const oneHotWeighted = (index, length, weight) => 
+    tf.oneHot(index, length).cast('float32').mul(weight)
+
+function encodeProduct(product, context) {
+    //Normaliza dados para o intervalo [0, 1]
+    //Aplica o peso na recomendação
+    const price = tf.tensor1d([
+        normalize(
+            product.price,
+            context.minPrice,
+            context.maxPrice
+        ) * WEIGHTS.price
+    ])
+
+    const age = tf.tensor1d([
+        (
+        context.productAvgAgeNorm[product.name] ?? 0.5
+        ) * WEIGHTS.age
+    ])
+
+    const category = oneHotWeighted(
+        context.categoriesIndex[product.category],
+        context.numCatagories,
+        WEIGHTS.category   
+    )
+
+    const color = oneHotWeighted(
+        context.colorIndex[product.color],
+        context.numColors,
+        WEIGHTS.color
+    )
+
+    return tf.concat1d(
+        [
+            price,
+            age,
+            category,
+            color
+        ]
+    )
+}
+        
+function encodeUser(user, context) {
+    if(user.purchases.length) {
+        return tf.stack(
+            user.purchases.map(
+                product => encodeProduct(product, context)
+            )
+        )
+        //Média dos vetores dos produtos comprados
+        .mean(0)  
+        //Reshape para manter a consistência
+        .reshape([
+            1,
+            context.dimensions
+        ]) 
+    }
+}
+
+function createTraningData(context) {
+    context.users.forEach(user => {
+        const userVector = encodeUser(user,context)
+        debugger
+    })
+ 
 }
 
 async function trainModel({ users }) {
@@ -79,6 +153,20 @@ async function trainModel({ users }) {
     const catalog = await(await fetch('/data/products.json')).json();
 
     const context = makeContext(catalog, users);
+    context.productVectors = catalog.map(product => {
+        return {
+            name: product.name,
+            meta:{...product},
+            // O dataSync é para obter os dados como um array normal.
+            // Mas isso bloqueia o thread. Em um cenário real, seria melhor manter os tensores e usar operações assíncronas.
+            vector: encodeProduct(product, context).dataSync() 
+        }
+    })
+
+    _globalCtx = context
+
+    const trainData = createTraningData(context)
+
     postMessage({
         type: workerEvents.trainingLog,
         epoch: 1,
