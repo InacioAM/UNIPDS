@@ -15,6 +15,7 @@ async function loadModelAndLabels() {
 
     // warmup
     const dummyInput = tf.ones(_model.inputs[0].shape)
+    debugger
     await _model.executeAsync(dummyInput)
     tf.dispose(dummyInput)
 
