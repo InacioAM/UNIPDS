@@ -7,6 +7,7 @@ const CLASS_THRESHOLD = 0.4
 
 let _labels = []
 let _model = null
+
 async function loadModelAndLabels() {
     await tf.ready()
 
@@ -15,7 +16,6 @@ async function loadModelAndLabels() {
 
     // warmup
     const dummyInput = tf.ones(_model.inputs[0].shape)
-    debugger
     await _model.executeAsync(dummyInput)
     tf.dispose(dummyInput)
 
@@ -34,6 +34,7 @@ async function loadModelAndLabels() {
  * - Garante que tensores temporários serão descartados automaticamente,
  *   evitando vazamento de memória.
  */
+
 function preprocessImage(input) {
     return tf.tidy(() => {
         const image = tf.browser.fromPixels(input)
